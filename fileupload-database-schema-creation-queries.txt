@@ -1,0 +1,88 @@
+-- schema creation command
+create schema filemanagerdb;
+
+
+-- Tables creation
+create table file_user (
+    user_id int(9) primary key AUTO_INCREMENT,
+    user_name varchar(25),
+    password varchar(25),
+    first_name varchar(100),
+    last_name varchar(100)
+);
+
+create table user_preferences (
+    preferences_id int(9) primary key AUTO_INCREMENT,
+    user_id int(9),
+    file_upload_path varchar(200),
+    chunk_size int(9),
+    dedupe_type varchar(20),
+    foreign key (user_id) references file_user (user_id)
+);
+
+create table file_object(
+    file_id int(9) primary key AUTO_INCREMENT, 
+    user_id int(9),
+    file_path varchar(200),
+    file_name varchar(100),
+    file_hash varchar(50),
+
+    file_size numeric(15),
+    duplicate_file_id int(9),
+    foreign key (user_id) references file_user (user_id),
+    foreign key (duplicate_file_id) references file_object (file_id)
+);
+
+create table file_chunk(
+    chunk_id int(9) primary key AUTO_INCREMENT,
+    file_id int(9),
+    chunk_sequence int(5),
+    chunk_hash  varchar(50),
+    duplicate_chunk_id int(9),
+    foreign key (file_id) references file_object (file_id),
+    foreign key (duplicate_chunk_id) references file_chunk (chunk_id)
+);
+
+
+create table application_stats (
+
+    stat_id int(9) primary key AUTO_INCREMENT,
+
+    user_id int(9),
+
+    total_upload_size numeric(15),
+
+    compressed_size numeric(15),
+
+    total_file_count int(9),
+
+    foreign key (user_id) references file_user (user_id)
+);
+
+
+-- seed admin user
+
+
+
+
+insert into file_user (user_name, password, first_name, last_name)
+
+values('admin', 'admin', 'Admin', 'Admin');
+
+
+
+
+-- seed admin user default preferences
+insert into user_preferences (user_id, file_upload_path, chunk_size)
+
+(select user_id, 'c:\\filemanager\\uploads\\', 1024 from file_user where user_name = 'admin');
+
+
+
+
+-- seed default application stats
+insert into application_stats (user_id, total_upload_size, compressed_size, total_file_count)
+
+(select user_id, 0, 0, 0 from file_user where user_name = 'admin');
+
+commit;

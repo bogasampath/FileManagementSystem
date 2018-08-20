@@ -1,0 +1,431 @@
+package com.fileupload.util;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import org.apache.commons.codec.digest.DigestUtils;
+
+import com.fileupload.db.DBUtil;
+import com.fileupload.db.FileChunk;
+import com.fileupload.db.UserPreferences;
+
+public class FileUtils {
+	
+	private static final Logger LOGGER = Logger.getLogger(FileUtils.class.getName());
+	
+	private static int READ_LENGTH = 1024; //1Kb in bytes
+	
+	public static final String CHUNK_PREFIX = "-";
+    
+	public static String getShaHash(String filePath, String fileName) 
+	throws IOException {
+		InputStream stream = null;
+		try {
+			File file = new File(filePath, fileName);
+			stream = new FileInputStream(file);
+			String hash = DigestUtils.sha512Hex(stream);
+			return hash;
+		} finally {
+			try {
+				if(stream != null) {
+					stream.close();
+				}
+			} catch(Exception e) {
+				e.printStackTrace();
+			}
+		}
+		
+	}
+	
+	public static String getShaHash(byte[] bytes) 
+	throws IOException {
+		return DigestUtils.shaHex(bytes);
+	}
+
+	public static Long getFileSize(String filePath, String fileName)
+	throws IOException {
+		File file = new File(filePath, fileName);
+		if(file != null && file.exists()) {
+			return file.length();
+		}
+		return 0L;
+	}
+	
+	public static String getUniquePath() {
+		return System.currentTimeMillis() + "";
+	}
+	
+	public static String getUniqueUploadFilePath(Integer userId)
+	throws Exception {
+		UserPreferences prefs = DBUtil.getUserPreferences(userId);
+		String uploadPath = prefs.getFileUploadPath();
+		String uniquePath = FileUtils.getUniquePath();
+		if(!uploadPath.endsWith("\\")) {
+			uploadPath = uploadPath + "\\";
+		}
+		return (uploadPath + uniquePath+ "\\");
+	}
+	
+
+	public static List<FileChunk> createFileChunks(String fileName,
+			String sourcepath, String destinationPath, long chunkSize)
+			throws IOException {
+		LOGGER.log(Level.INFO, "createFileSegments, fileName: " +
+			fileName + ", sourcePath" + sourcepath + "destinationPath" +
+				destinationPath+ ", chunkSize: " + chunkSize);
+		if (isBlank(fileName))
+			throw new IllegalArgumentException("fileName cannot be empty");
+		if (isBlank(sourcepath))
+			throw new IllegalArgumentException("sourcepath cannot be empty");
+		if (isBlank(destinationPath))
+			throw new IllegalArgumentException("destinationPath cannot be empty");
+		// If destination directory not exists
+		// then create directory
+		File distDir = new File(destinationPath);
+		if(distDir != null || !distDir.exists()) {
+			distDir.mkdirs();
+		}
+
+		File inputFile = new File(sourcepath, fileName);
+		FileInputStream inputStream = null;
+		String chunkFileName;
+		FileOutputStream fileChunk = null;
+		long fileSize = inputFile.length();
+		int read = 0;
+		long readLength = chunkSize;
+		byte[] byteChunkPart;
+		List<FileChunk> fileChunks = new ArrayList<FileChunk>();
+		int readBucketLength;
+		int chunkNumber = 1;
+		try {
+			inputStream = new FileInputStream(inputFile);
+			
+			FileChunk chunk = null;
+			do {
+				chunk = new FileChunk();
+				readLength = chunkSize;
+				if (fileSize <= chunkSize) {
+					readLength = (int) fileSize;
+				}
+
+				chunkFileName = fileName + CHUNK_PREFIX + chunkNumber;
+				chunk.setChunkSequence(chunkNumber);
+				
+				fileChunk = new FileOutputStream(new File(destinationPath, chunkFileName));
+
+				readBucketLength = READ_LENGTH;
+				byteChunkPart = new byte[readBucketLength];
+
+				while (readLength > 0) {
+					if (readLength <= READ_LENGTH) {
+						readBucketLength = (int) readLength;
+						byteChunkPart = new byte[readBucketLength];
+					}
+					read = inputStream.read(byteChunkPart, 0, readBucketLength);
+					readLength -= read;
+					fileSize -= read;
+					fileChunk.write(byteChunkPart);
+					fileChunk.flush();
+				}
+				try {
+					fileChunk.close();
+				} catch(Exception e) {
+					LOGGER.log(Level.SEVERE, "Error while closing stream for chunk file: "+
+							chunkFileName, e);
+				}
+				byteChunkPart = null;
+				fileChunk = null;
+				LOGGER.log(Level.INFO, "Successfully placed the chunk file: " +
+						chunkFileName + " in path: " + destinationPath);
+				
+				String chunkHash = FileUtils.getShaHash(destinationPath, chunkFileName);
+				chunk.setChunkHash(chunkHash);
+				fileChunks.add(chunk);
+				++chunkNumber;
+			} while (fileSize > 0);
+		} finally {
+			if (inputStream != null)
+				inputStream.close();
+
+			if (fileChunk != null)
+				fileChunk.close();
+		}
+		LOGGER.log(Level.INFO, "Number of chunk files created: "+
+				(chunkNumber + 1));
+		// Delete source file
+		File sourceFile = new File((sourcepath + fileName));
+    	if(sourceFile != null) {
+    		sourceFile.delete();
+    	}
+    	return fileChunks;
+	}
+	
+	public static List<FileChunk> createContentAwareFileChunks(
+			String fileName, String sourcePath, String distpath, Long chunkSize)
+	throws Exception {
+		List<ChunkBoundary> chunkBoundaries = 
+				prepareChunkBoundaries(
+						fileName, sourcePath, chunkSize.intValue());
+		return createContentAwareFileChunks(
+				fileName, sourcePath, distpath, chunkBoundaries);
+	}
+	
+	public static List<ChunkBoundary> prepareChunkBoundaries(String fileName, String filePath, int chunkSize) 
+	throws Exception {
+
+		File file = new File(filePath, fileName);
+		InputStream inputStream = new FileInputStream(file);
+		List<ChunkBoundary> boundaries = new LinkedList<ChunkBoundary>();
+		try {
+			byte[] chunk = new byte[chunkSize];
+			byte[] tempChunk = new byte[chunkSize];
+			byte[] slideChunk = new byte[chunkSize];
+			long fileSize = file.length();
+			long fileSizeToRead = fileSize;
+			int readLength = chunkSize;
+			ChunkBoundary boundary = null;
+			int iteration = 0;
+			boolean duplicateChunk = false;
+			long lastChunkIndex = 0;
+			int unmatchedDataLength = 0;
+			int slideCounter = 0;
+			boolean dataAvailable = false;
+			int read = 0;
+			do {
+				if(!dataAvailable) {
+					readLength = chunkSize;
+					if(fileSizeToRead < chunkSize) {
+						readLength = (int) fileSizeToRead;
+					}
+					chunk = new byte[readLength];
+					read = inputStream.read(chunk, 0, readLength);
+					fileSizeToRead = fileSizeToRead - read;
+				}
+				if(iteration == 0) {
+					duplicateChunk = isDuplicateChunk(chunk);
+					if(duplicateChunk) {
+						boundary = new ChunkBoundary(lastChunkIndex,
+								(lastChunkIndex = lastChunkIndex + chunk.length));
+						boundaries.add(boundary);
+					} else {
+						tempChunk = new byte[chunk.length];
+						System.arraycopy(chunk, 0, tempChunk, 0, chunk.length);
+						++unmatchedDataLength;
+					}
+				} else if (duplicateChunk && slideCounter == 0) {
+					duplicateChunk = isDuplicateChunk(chunk);
+					if(duplicateChunk) {
+						boundary = new ChunkBoundary((lastChunkIndex),
+								(lastChunkIndex = lastChunkIndex + chunk.length));
+						boundaries.add(boundary);
+						unmatchedDataLength = 0;
+					} else {
+						System.arraycopy(chunk, 0, tempChunk, 0, chunk.length);
+						++unmatchedDataLength;
+					}
+					dataAvailable = false;
+				} else if (!duplicateChunk && slideCounter == 0) {
+					do {
+						slideChunk = new byte[tempChunk.length];
+						System.arraycopy(tempChunk, 1, slideChunk, 0, (tempChunk.length-1));
+						slideChunk[tempChunk.length-1] = chunk[slideCounter];
+						duplicateChunk = isDuplicateChunk(slideChunk);
+						++slideCounter;
+						if(duplicateChunk) {
+							// unmatched data boundary
+							boundary = new ChunkBoundary((lastChunkIndex),
+									(lastChunkIndex = lastChunkIndex + unmatchedDataLength));
+							boundaries.add(boundary);
+							// matched data boundary
+							boundary = new ChunkBoundary((lastChunkIndex),
+									(lastChunkIndex = lastChunkIndex + slideChunk.length));
+							boundaries.add(boundary);
+							unmatchedDataLength = 0;
+							if(slideCounter < chunk.length) {
+								readLength = (chunkSize - (chunk.length - slideCounter));//chunkSize - slideCounter;
+								if(readLength > fileSizeToRead) {
+									readLength = (int) fileSizeToRead;
+								}
+								//tempChunk = new byte[(chunk.length - slideCounter)+readLength];
+								tempChunk = new byte[chunkSize];
+								int lengthToCopy = chunk.length - slideCounter;
+								System.arraycopy(chunk, slideCounter, tempChunk, 0, lengthToCopy);
+								chunk = new byte[readLength];
+								read = inputStream.read(chunk, 0, readLength);
+								System.arraycopy(chunk, 0, tempChunk, lengthToCopy, chunk.length);
+								chunk = new byte[tempChunk.length];
+								System.arraycopy(tempChunk, 0, chunk, 0, tempChunk.length);
+								fileSizeToRead = fileSizeToRead - read;
+								dataAvailable = true;
+								slideCounter = 0;
+							}
+						} else {
+							++unmatchedDataLength;
+							System.arraycopy(slideChunk, 0, tempChunk, 0, slideChunk.length);
+							dataAvailable = false;
+						}
+					} while(!duplicateChunk && (slideCounter < chunk.length));
+					if(!duplicateChunk) {
+						slideCounter = 0;
+					}
+				} else {
+					LOGGER.log(Level.INFO,"***** Unknown state *****");
+				}
+				++iteration;
+			} while (fileSizeToRead > 0);
+			if(lastChunkIndex < fileSize) {
+				ChunkBoundary b = new ChunkBoundary(lastChunkIndex, fileSize);
+				boundaries.add(b);
+			}
+		} finally {
+			if(inputStream != null) {
+				try {
+					inputStream.close();
+				} catch (Exception e) {
+					
+				}
+			}
+		}
+		
+		// rearrange boundaries
+		List<ChunkBoundary> bList = new LinkedList<ChunkBoundary>();
+		for(ChunkBoundary b : boundaries) {
+			if(chunkSize < (b.getEndIndex() - b.getStartIndex())) {
+				int j = 0;
+				long boundaryLength = (b.getEndIndex() - b.getStartIndex());
+				do {
+					long startIndex = 0L;
+					long endIndex = 0L;
+					if(j == 0) {
+						startIndex = b.getStartIndex();
+						endIndex = (b.getStartIndex() + chunkSize);
+					} else {
+						startIndex = b.getStartIndex() + (j*chunkSize);
+						if(boundaryLength < chunkSize) {
+							endIndex = b.getEndIndex();
+						} else {
+							endIndex = startIndex + chunkSize;
+						}
+					}
+					ChunkBoundary cb = new ChunkBoundary(startIndex, endIndex);
+					bList.add(cb);
+					j++;
+					boundaryLength = boundaryLength - chunkSize;
+				} while (boundaryLength > 0);
+			} else {
+				bList.add(b);
+			}
+		}
+		return bList;
+	}
+
+	
+	public static List<FileChunk> createContentAwareFileChunks(String fileName,
+			String sourcepath, String destinationPath, List<ChunkBoundary> chunkBoundaries)
+			throws IOException {
+		LOGGER.log(Level.INFO, "createFileSegments, fileName: " +
+			fileName + ", sourcePath" + sourcepath + "destinationPath" +
+				destinationPath);
+		if (isBlank(fileName))
+			throw new IllegalArgumentException("fileName cannot be empty");
+		if (isBlank(sourcepath))
+			throw new IllegalArgumentException("sourcepath cannot be empty");
+		if (isBlank(destinationPath))
+			throw new IllegalArgumentException("destinationPath cannot be empty");
+		// If destination directory not exists
+		// then create directory
+		File distDir = new File(destinationPath);
+		if(distDir != null || !distDir.exists()) {
+			distDir.mkdirs();
+		}
+
+		File inputFile = new File(sourcepath, fileName);
+		FileInputStream inputStream = null;
+		String chunkFileName;
+		FileOutputStream fileChunk = null;
+		byte[] byteChunkPart;
+		List<FileChunk> fileChunks = new ArrayList<FileChunk>();
+		int readBucketLength;
+		int chunkNumber = 1;
+		try {
+			inputStream = new FileInputStream(inputFile);
+			
+			FileChunk chunk = null;
+			for (ChunkBoundary chunkBoundary : chunkBoundaries) {
+				chunk = new FileChunk();
+				
+				chunkFileName = fileName + CHUNK_PREFIX + chunkNumber;
+				chunk.setChunkSequence(chunkNumber);
+				
+				fileChunk = new FileOutputStream(new File(destinationPath, chunkFileName));
+
+				readBucketLength = (int)(chunkBoundary.getEndIndex() - chunkBoundary.getStartIndex());
+				byteChunkPart = new byte[readBucketLength];
+
+				inputStream.read(byteChunkPart, 0, readBucketLength);
+				fileChunk.write(byteChunkPart);
+				fileChunk.flush();
+				try {
+					fileChunk.close();
+				} catch(Exception e) {
+					LOGGER.log(Level.SEVERE, "Error while closing stream for chunk file: "+
+							chunkFileName, e);
+				}
+				byteChunkPart = null;
+				fileChunk = null;
+				LOGGER.log(Level.INFO, "Successfully placed the chunk file: " +
+						chunkFileName + " in path: " + destinationPath);
+				
+				String chunkHash = FileUtils.getShaHash(destinationPath, chunkFileName);
+				chunk.setChunkHash(chunkHash);
+				fileChunks.add(chunk);
+				++chunkNumber;
+			}
+		} finally {
+			if (inputStream != null)
+				inputStream.close();
+
+			if (fileChunk != null)
+				fileChunk.close();
+		}
+		LOGGER.log(Level.INFO, "Number of chunk files created: "+
+				(chunkNumber + 1));
+		// Delete source file
+		File sourceFile = new File((sourcepath + fileName));
+    	if(sourceFile != null) {
+    		sourceFile.delete();
+    	}
+    	return fileChunks;
+	}
+	
+	private static boolean isDuplicateChunk(byte[] chunk)
+	throws Exception {
+		String chunkHash = FileUtils.getShaHash(chunk);
+		FileChunk fileChunk = FileManager.findDuplicateChunk(chunkHash);
+		return (fileChunk != null);
+	}
+	
+	private static boolean isBlank(String val) {
+		if(val == null || val.trim().isEmpty()) {
+			return true;
+		}
+		return false;
+	}
+	
+	public static void main(String[] args)
+	throws IOException {
+		String fileName = "DiskUtil.java";
+		String filePath = "D:\\projects\\";
+		
+		createFileChunks(fileName, filePath, filePath+"chunks\\", READ_LENGTH);
+		
+	}
+}

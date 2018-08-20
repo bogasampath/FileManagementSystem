@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Delete 4 resources" deleteContents="false" description="Delete 4 resources" element1="/fileuploader/WebContent/WEB-INF/lib/jackson-core-asl-1.9.2.jar" element2="/fileuploader/WebContent/WEB-INF/lib/jackson-jaxrs-1.9.2.jar" element3="/fileuploader/WebContent/WEB-INF/lib/jackson-mapper-asl-1.9.2.jar" element4="/fileuploader/WebContent/WEB-INF/lib/jackson-xc-1.9.2.jar" flags="7" id="org.eclipse.ltk.core.refactoring.delete.resources" resources="4" stamp="1504720908586"/>
+</session>

@@ -1,0 +1,554 @@
+package com.fileupload.db;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import com.fileupload.util.FileManager;
+
+public class DBUtil {
+
+	private static final Logger LOGGER = Logger.getLogger(DBUtil.class.getName());
+	public static final Integer DEFAULT_CHUNK_SIZE = 1024;
+	
+	public static UserPreferences getUserPreferences(Integer userId)
+	throws Exception {
+		UserPreferences preferences = null;
+		try {
+			Connection c = MySqlFactory.getMySqlConnection();
+            Statement stmt = c.createStatement();
+            String query = "select * from user_preferences where user_id = " +
+            		userId;
+            ResultSet rs = stmt.executeQuery(query);
+            if (rs.next()) {
+            	Integer preferencesId = rs.getInt("preferences_id");
+                String filePath = rs.getString("file_upload_path");
+                Integer chunkSize = rs.getInt("chunk_size");
+                String dedupeType = rs.getString("dedupe_type");
+                preferences = new UserPreferences();
+                preferences.setId(preferencesId);
+                preferences.setUserId(userId);
+                preferences.setFileUploadPath(filePath);
+                preferences.setDedupeType(dedupeType);
+                preferences.setChunkSize(chunkSize);
+            }
+		} catch(Exception e) {
+			LOGGER.log(Level.SEVERE, "Error while fetching preferences for userId:"+
+					userId, e);
+			throw e;
+		}
+		return preferences;
+	}
+    
+    public static User createUser(User user)
+    throws Exception {
+    	try {
+        	Connection connection = MySqlFactory.getMySqlConnection();
+        	PreparedStatement stmt = connection
+        			.prepareStatement("insert into file_user "
+        								+ "(user_name, password, first_name, last_name)"
+        								+ " values (?,?,?,?)");
+            stmt.setString(1, user.getUserName());
+            stmt.setString(2, user.getPassword());
+            stmt.setString(3, user.getFirstName());
+            stmt.setString(4, user.getLastName());
+            Integer insertedCount = stmt.executeUpdate();
+            if (insertedCount == 1) {
+                String query = "SELECT LAST_INSERT_ID()";
+                Statement st = connection.createStatement();
+                ResultSet rs = st.executeQuery(query);
+                Integer userId = null;
+                if (rs.next()) {
+                	userId = rs.getInt(1);
+                	user.setUserId(userId);
+                }
+                DBUtil.saveDefaultPreferencesForUser(userId);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error while saving user details: "+user, e);
+            throw e;
+        }
+        return user;
+    }
+    
+    private static void saveDefaultPreferencesForUser(Integer userId)
+    throws Exception {
+    	UserPreferences preferences = new UserPreferences();
+    	preferences.setUserId(userId);
+    	preferences.setChunkSize(DEFAULT_CHUNK_SIZE);
+    	preferences.setFileUploadPath(FileManager.DEFAULT_FILE_PATH_FOR_UPLOAD);
+    	preferences.setDedupeType(FileManager.DEFAULT_DEDUPE_TYPE);
+    	DBUtil.saveUserPreferences(preferences);
+    }
+	
+    public static UserPreferences saveUserPreferences(UserPreferences preferences)
+    throws Exception {
+    	if(preferences == null) {
+    		throw new Exception("Preferences object got null");
+    	}
+        try {
+        	Connection connection = MySqlFactory.getMySqlConnection();
+        	PreparedStatement stmt = connection
+        			.prepareStatement("insert into user_preferences ("+
+        					"user_id, file_upload_path, chunk_size, dedupe_type) values (?,?,?,?)");
+        	
+            stmt.setInt(1, preferences.getUserId());
+            stmt.setString(2, preferences.getFileUploadPath());
+            stmt.setInt(3, preferences.getChunkSize());
+            stmt.setString(4, preferences.getDedupeType());
+            Integer insertedCount = stmt.executeUpdate();
+            if (insertedCount == 1) {
+                String query = "SELECT LAST_INSERT_ID()";
+                Statement st = connection.createStatement();
+                ResultSet rs = st.executeQuery(query);
+                if (rs.next()) {
+                	Integer preferencesId = rs.getInt(1);
+                	preferences.setId(preferencesId);
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error while saving preferences for userId: "+
+            		preferences.getUserId(), e);
+            throw e;
+        }
+    	return preferences;
+    }
+    
+    public static UserPreferences updateUserPreferences(UserPreferences preferences)
+    throws Exception {
+    	if(preferences == null) {
+    		throw new Exception("Preferences object got null");
+    	}
+        try {
+        	Connection connection = MySqlFactory.getMySqlConnection();
+        	PreparedStatement stmt = connection
+        			.prepareStatement("update user_preferences set "+
+        					"file_upload_path = ?, chunk_size = ?, dedupe_type = ? where user_id = ? ");
+        	
+            stmt.setString(1, preferences.getFileUploadPath());
+            stmt.setInt(2, preferences.getChunkSize());
+            stmt.setString(3, preferences.getDedupeType());
+            stmt.setInt(4, preferences.getUserId());
+            Integer updatedRowsCount = stmt.executeUpdate();
+            LOGGER.log(Level.INFO, "Update preferences records count: "+
+            		updatedRowsCount);
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error while saving preferences for userId: "+
+            		preferences.getUserId(), e);
+            throw e;
+        }
+    	return preferences;
+    }
+
+	public static ApplicationStatistics getApplicationStatistics(Integer userId)
+	throws Exception {
+		ApplicationStatistics stats = null;
+		try {
+			Connection c = MySqlFactory.getMySqlConnection();
+            Statement stmt = c.createStatement();
+            String query = "select * from application_stats where user_id = " +
+            		userId;
+            ResultSet rs = stmt.executeQuery(query);
+            if (rs.next()) {
+            	Integer preferencesId = rs.getInt("stat_id");
+                Long totalUploadSize = rs.getLong("total_upload_size");
+                Long compressedSize = rs.getLong("compressed_size");
+                Integer uploadFilesCount = rs.getInt("total_file_count");
+                stats = new ApplicationStatistics();
+                stats.setId(preferencesId);
+                stats.setUserId(userId);
+                stats.setTotalFilesSize(totalUploadSize);
+                stats.setCompressedStorageSize(compressedSize);
+                stats.setTotalFilesCount(uploadFilesCount);
+            }
+		} catch(Exception e) {
+			LOGGER.log(Level.SEVERE, "Error while fetching statistics for userId:"+
+					userId, e);
+			throw e;
+		}
+		return stats;
+	}
+    
+	public static void updateApplicationStats(Long uploadFileSize,
+    		Long compressedSize, Integer userId)
+    throws Exception {
+    	if(userId == null) {
+    		throw new Exception("userId got null to update Application statistics");
+    	}
+        try {
+        	Connection connection = MySqlFactory.getMySqlConnection();
+        	PreparedStatement stmt = connection
+        			.prepareStatement("update application_stats set "+
+        					" total_upload_size = (total_upload_size + ?), "+
+        					" compressed_size = (compressed_size + ?), "+
+        					" total_file_count = (total_file_count + 1) "+
+        					" where user_id = ? ");
+        	
+            stmt.setLong(1, uploadFileSize);
+            stmt.setLong(2, compressedSize);
+            stmt.setInt(3, userId);
+            Integer updatedRowsCount = stmt.executeUpdate();
+            LOGGER.log(Level.INFO, "Updated statistics records count: "+
+            		updatedRowsCount);
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error while saving statistics for userId: "+
+            		userId, e);
+            throw e;
+        }
+    }
+    
+    public static User authenticateUser(String username, String password)
+    throws Exception {
+        return DBUtil.findUser(username, password);
+    }
+    
+    public static User findUser(String userName, String password)
+    throws Exception {
+    	User user = null;
+    	try {
+            Connection c = MySqlFactory.getMySqlConnection();
+            Statement stmt = c.createStatement();
+            String query = "select * from file_user where user_name = '" +
+            		userName + "' and password = '" + password + "'";
+            ResultSet rs = stmt.executeQuery(query);
+            if (rs.next()) {
+            	Integer userId = rs.getInt("user_id");
+                String username = rs.getString("user_name");
+                String pwd = rs.getString("password");
+                String firstName = rs.getString("first_name");
+                String lastName = rs.getString("last_name");
+                user = new User();
+                user.setUserId(userId);
+                user.setUserName(username);
+                user.setPassword(pwd);
+                user.setFirstName(firstName);
+                user.setLastName(lastName);
+            }
+        } catch (Exception e) {
+        	LOGGER.log(Level.SEVERE, "Error while authenticating user for userName: "+
+            		userName + ", password: " + password, e);
+        	throw e;
+        }
+    	return user;
+    }
+    
+    public static User findUserByUserName(String userName)
+    throws Exception {
+    	User user = null;
+    	try {
+            Connection c = MySqlFactory.getMySqlConnection();
+            Statement stmt = c.createStatement();
+            String query = "select * from file_user where user_name = '" +
+            		userName + "'";
+            ResultSet rs = stmt.executeQuery(query);
+            if (rs.next()) {
+            	Integer userId = rs.getInt("user_id");
+                String username = rs.getString("user_name");
+                String pwd = rs.getString("password");
+                String firstName = rs.getString("first_name");
+                String lastName = rs.getString("last_name");
+                user = new User();
+                user.setUserId(userId);
+                user.setUserName(username);
+                user.setPassword(pwd);
+                user.setFirstName(firstName);
+                user.setLastName(lastName);
+            }
+        }
+    	catch (Exception e) {
+        	LOGGER.log(Level.SEVERE, "Error while authenticating user for userName: "+
+            		userName, e);
+        	throw e;
+        }
+    	return user;
+    }
+    
+    public static List<FileObject> findFilesByUSer(Integer userId)
+    throws Exception {
+        List<FileObject> files = new ArrayList<FileObject>();
+        try {
+            Connection c = MySqlFactory.getMySqlConnection();
+            Statement stmt = c.createStatement();
+            String query = "select * from file_object where user_id = " +userId;
+            ResultSet rs = stmt.executeQuery(query);
+            FileObject file = null;
+            while (rs.next()) {
+                Integer fileId = rs.getInt("file_id");
+                String fileName = rs.getString("file_name");
+                String filePath = rs.getString("file_path");
+                String hash = rs.getString("file_hash");
+                Long fileSize = rs.getLong("file_size");
+                Integer duplicateFileId = rs.getInt("duplicate_file_id");
+                file = new FileObject();
+                file.setFileId(fileId);
+                file.setUserId(userId);
+                file.setFileName(fileName);
+                file.setFilePath(filePath);
+                file.setFileHash(hash);
+                file.setFileSize(fileSize);
+                file.setDuplicateFileId(duplicateFileId);
+                files.add(file);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error while fetching files for userId: "+
+            		userId, e);
+            throw e;
+        }
+        return files;
+    }
+    
+    public static List<FileChunk> fetchChunksByFileId(Integer fileId)
+    throws Exception {
+        FileChunk chunk = null;
+        List<FileChunk> chunks = new LinkedList<FileChunk>();
+        try {
+            Connection c = MySqlFactory.getMySqlConnection();
+            Statement stmt = c.createStatement();
+            String query = "select * from file_chunk where file_id = " +
+            		fileId + " order by chunk_sequence asc";
+            ResultSet rs = stmt.executeQuery(query);
+            while (rs.next()) {
+            	Integer chunkId = rs.getInt("chunk_id");
+            	Integer chunkSequence = rs.getInt("chunk_sequence");
+            	String chunkHash = rs.getString("chunk_hash");
+            	Integer duplicateChunkId = rs.getInt("duplicate_chunk_id");
+                chunk = new FileChunk();
+                chunk.setChunkId(chunkId);
+                chunk.setFileId(fileId);
+                chunk.setChunkSequence(chunkSequence);
+                chunk.setChunkHash(chunkHash);
+                chunk.setDuplicateChunkId(duplicateChunkId);
+                chunks.add(chunk);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE,
+            		"Error while fetching file chunks for fileId: "+
+            		fileId, e);
+            throw e;
+        }
+        return chunks;
+    }
+    
+    public static FileChunk findChunkById(Integer chunkId)
+    throws Exception {
+        FileChunk chunk = null;
+        try {
+            Connection c = MySqlFactory.getMySqlConnection();
+            Statement stmt = c.createStatement();
+            String query = "select * from file_chunk where chunk_id = " +
+            		chunkId;
+            ResultSet rs = stmt.executeQuery(query);
+            if (rs.next()) {
+            	Integer fileId = rs.getInt("file_id");
+            	Integer chunkSequence = rs.getInt("chunk_sequence");
+            	String chunkHash = rs.getString("chunk_hash");
+            	Integer duplicateChunkId = rs.getInt("duplicate_chunk_id");
+                chunk = new FileChunk();
+                chunk.setChunkId(chunkId);
+                chunk.setFileId(fileId);
+                chunk.setChunkSequence(chunkSequence);
+                chunk.setChunkHash(chunkHash);
+                chunk.setDuplicateChunkId(duplicateChunkId);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE,
+            		"Error while fetching file chunk for chunkId: "+
+            		chunkId, e);
+            throw e;
+        }
+        return chunk;
+    }
+    
+    public static FileChunk findChunkByHash(String hash)
+    throws Exception {
+        FileChunk chunk = null;
+        try {
+            Connection c = MySqlFactory.getMySqlConnection();
+            Statement stmt = c.createStatement();
+            String query = "select * from file_chunk where chunk_hash = '" +
+            		hash + "' and duplicate_chunk_id is null"; // duplicate chunk id condition 
+            												  // is added to get original duplicate chunk object
+            												  // instead of getting other existing duplicate chunks
+            ResultSet rs = stmt.executeQuery(query);
+            if (rs.next()) {
+            	Integer chunkId = rs.getInt("chunk_id");
+            	Integer fileId = rs.getInt("file_id");
+            	Integer chunkSequence = rs.getInt("chunk_sequence");
+                chunk = new FileChunk();
+                chunk.setChunkId(chunkId);
+                chunk.setFileId(fileId);
+                chunk.setChunkSequence(chunkSequence);
+                chunk.setChunkHash(hash);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE,
+            		"Error while fetching file chunk for hash: "+
+            		hash, e);
+            throw e;
+        }
+        return chunk;
+    }
+    
+    public static FileObject findFileById(Integer fileId)
+    throws Exception {
+        FileObject file = null;
+        try {
+            Connection c = MySqlFactory.getMySqlConnection();
+            Statement stmt = c.createStatement();
+            String query = "select * from file_object where file_id = "+fileId;
+            ResultSet rs = stmt.executeQuery(query);
+            if (rs.next()) {
+            	Integer userId = rs.getInt("user_id");
+                String fileName = rs.getString("file_name");
+                String filePath = rs.getString("file_path");
+                String fileHash = rs.getString("file_hash");
+                Long fileSize = rs.getLong("file_size");
+                Integer duplicateFileId = rs.getInt("duplicate_file_id");
+                file = new FileObject();
+                file.setFileId(fileId);
+                file.setUserId(userId);
+                file.setFileName(fileName);
+                file.setFilePath(filePath);
+                file.setFileHash(fileHash);
+                file.setFileSize(fileSize);
+                file.setDuplicateFileId(duplicateFileId);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error while fetching file for fileId: "+
+            		fileId, e);
+            throw e;
+        }
+        return file;
+    }
+    
+    public static FileObject findFileByHash(String hash)
+    throws Exception {
+        FileObject file = null;
+        try {
+            Connection c = MySqlFactory.getMySqlConnection();
+            Statement stmt = c.createStatement();
+            String query = "select * from file_object where file_hash = '" +
+            		hash + "' and duplicate_file_id is null"; 
+            // duplicate file id condition 
+            // is added to get original duplicate file object
+            // instead of getting other existing duplicate files
+            ResultSet rs = stmt.executeQuery(query);
+            if (rs.next()) {
+            	Integer fileId = rs.getInt("file_id");
+            	Integer userId = rs.getInt("user_id");
+                String fileName = rs.getString("file_name");
+                String filePath = rs.getString("file_path");
+                Long fileSize = rs.getLong("file_size");
+                Integer duplicateFileId = rs.getInt("duplicate_file_id");
+                file = new FileObject();
+                file.setFileId(fileId);
+                file.setUserId(userId);
+                file.setFileName(fileName);
+                file.setFilePath(filePath);
+                file.setFileHash(hash);
+                file.setFileSize(fileSize);
+                file.setDuplicateFileId(duplicateFileId);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error while fetching file for hash: "+
+            		hash, e);
+            throw e;
+        }
+        return file;
+    }
+    
+    public static FileObject saveFileObject(FileObject file)
+    throws Exception {
+    	if(file == null) {
+    		throw new Exception("file got null");
+    	}
+    	
+    	Connection connection = null;
+    	PreparedStatement pStmt = null;
+    	Statement stmt = null;
+    	try {
+    		String query = "insert into file_object "+
+					" (user_id, file_path, file_name, file_hash, file_size, duplicate_file_id) "+
+					" values (?, ?, ?, ?, ?, ?)";
+    		if(file.getDuplicateFileId() == null) {
+    			query = "insert into file_object "+
+    					" (user_id, file_path, file_name, file_hash, file_size) "+
+    					" values (?, ?, ?, ?, ?)";
+    		}
+        	connection = MySqlFactory.getMySqlConnection();
+        	pStmt = connection.prepareStatement(query);
+        	pStmt.setInt(1, file.getUserId());
+            pStmt.setString(2, file.getFilePath());
+            pStmt.setString(3, file.getFileName());
+            pStmt.setString(4, file.getFileHash());
+            pStmt.setLong(5, file.getFileSize());
+            if(file.getDuplicateFileId() != null)
+            	pStmt.setInt(6, file.getDuplicateFileId());
+            Integer insertedCount = pStmt.executeUpdate();
+            if (insertedCount == 1) {
+                query = "SELECT LAST_INSERT_ID()";
+                stmt = connection.createStatement();
+                ResultSet rs = stmt.executeQuery(query);
+                if (rs.next()) {
+                	Integer fileId = rs.getInt(1);
+                	file.setFileId(fileId);
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error while saving file with details: "+
+            		file, e);
+            throw e;
+        }
+    	return file;
+    }
+    
+    public static FileChunk saveFileChunk(FileChunk chunk)
+    throws Exception {
+    	if(chunk == null) {
+    		throw new Exception("chunk got null");
+    	}
+    	
+    	Connection connection = null;
+    	PreparedStatement pStmt = null;
+    	Statement stmt = null;
+    	try {
+    		String query = "insert into file_chunk "+
+					" (file_id, chunk_sequence, chunk_hash, duplicate_chunk_id) "+
+					" values (?, ?, ?, ?)";
+    		if(chunk.getDuplicateChunkId() == null) {
+    			query = "insert into file_chunk "+
+    					" (file_id, chunk_sequence, chunk_hash) "+
+    					" values (?, ?, ?)";
+    		}
+        	connection = MySqlFactory.getMySqlConnection();
+        	pStmt = connection.prepareStatement(query);
+        	pStmt.setInt(1, chunk.getFileId());
+            pStmt.setInt(2, chunk.getChunkSequence());
+            pStmt.setString(3, chunk.getChunkHash());
+            if(chunk.getDuplicateChunkId() != null)
+            	pStmt.setInt(4, chunk.getDuplicateChunkId());
+            Integer insertedCount = pStmt.executeUpdate();
+            if (insertedCount == 1) {
+                query = "SELECT LAST_INSERT_ID()";
+                stmt = connection.createStatement();
+                ResultSet rs = stmt.executeQuery(query);
+                if (rs.next()) {
+                	Integer chunkId = rs.getInt(1);
+                	chunk.setFileId(chunkId);
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error while saving chunk with details: "+
+            		chunk, e);
+            throw e;
+        }
+    	return chunk;
+    }
+
+}
